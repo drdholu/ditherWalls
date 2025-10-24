@@ -8,9 +8,9 @@ import { useProcessingStore } from "@/lib/state/processing-store";
 import { cn } from "@/lib/utils";
 
 const algorithmOptions: Array<{ label: string; value: ProcessingAlgorithm }> = [
-  { label: "Identity", value: "identity" },
-  { label: "Enhance", value: "enhance" },
-  { label: "Denoise", value: "denoise" },
+  { label: "None", value: "none" },
+  { label: "Floyd–Steinberg", value: "floyd-steinberg" },
+  { label: "Ordered Bayer 8×8", value: "ordered-bayer-8x8" },
 ];
 
 const resolutionOptions: Array<{ label: string; value: ResolutionPreset }> = [
@@ -20,9 +20,12 @@ const resolutionOptions: Array<{ label: string; value: ResolutionPreset }> = [
 ];
 
 const colorDepthOptions: Array<{ label: string; value: ColorDepthOption }> = [
-  { label: "8-bit", value: 8 },
-  { label: "10-bit", value: 10 },
-  { label: "12-bit", value: 12 },
+  { label: "2 levels", value: 2 },
+  { label: "4 levels", value: 4 },
+  { label: "8 levels", value: 8 },
+  { label: "16 levels", value: 16 },
+  { label: "32 levels", value: 32 },
+  { label: "64 levels", value: 64 },
 ];
 
 interface SidebarProps {
@@ -101,7 +104,7 @@ export function Sidebar({ className }: SidebarProps) {
             </label>
 
             <label className="flex flex-col gap-1">
-              <span className="text-xs uppercase tracking-wide text-muted-foreground">Color depth</span>
+              <span className="text-xs uppercase tracking-wide text-muted-foreground">Quantization levels</span>
               <select
                 className="h-9 rounded-md border border-border bg-background px-2 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
                 value={settings.colorDepth}
@@ -119,39 +122,23 @@ export function Sidebar({ className }: SidebarProps) {
 
         <section className="space-y-4 rounded-lg border border-border/70 bg-background/70 p-4">
           <header className="space-y-1">
-            <h3 className="font-medium text-foreground">Structure</h3>
-            <p className="text-xs text-muted-foreground">Balance algorithm strength and pixel scaling.</p>
+            <h3 className="font-medium text-foreground">Dithering</h3>
+            <p className="text-xs text-muted-foreground">Control diffusion intensity for the selected algorithm.</p>
           </header>
 
           <div className="space-y-4 text-sm">
             <div className="space-y-2">
               <div className="flex items-center justify-between text-xs uppercase tracking-wide text-muted-foreground">
-                <span>Strength</span>
-                <span>{Math.round(settings.strength * 100)}%</span>
+                <span>Intensity</span>
+                <span>{Math.round(settings.ditheringIntensity * 100)}%</span>
               </div>
               <input
                 type="range"
                 min={0}
                 max={1}
                 step={0.05}
-                value={settings.strength}
-                onChange={(event) => updateSetting("strength", parseFloat(event.target.value))}
-                className="w-full accent-primary"
-              />
-            </div>
-
-            <div className="space-y-2">
-              <div className="flex items-center justify-between text-xs uppercase tracking-wide text-muted-foreground">
-                <span>Pixel scale</span>
-                <span>{settings.pixelScale.toFixed(0)}×</span>
-              </div>
-              <input
-                type="range"
-                min={1}
-                max={4}
-                step={1}
-                value={settings.pixelScale}
-                onChange={(event) => updateSetting("pixelScale", Number(event.target.value))}
+                value={settings.ditheringIntensity}
+                onChange={(event) => updateSetting("ditheringIntensity", parseFloat(event.target.value))}
                 className="w-full accent-primary"
               />
             </div>

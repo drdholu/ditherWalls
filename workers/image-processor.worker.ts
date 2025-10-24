@@ -1,5 +1,6 @@
 /// <reference lib="webworker" />
 
+import { applyDithering } from "@/lib/algorithms/dithering";
 import type {
   ProcessingSettings,
   WorkerIncomingMessage,
@@ -145,18 +146,26 @@ function applyAdjustments(
     return;
   }
 
-  if (settings.brightness === 0 && settings.contrast === 0) {
-    return;
-  }
-
   const imageData = ctx.getImageData(0, 0, width, height);
   const adjusted = applyAdjustmentsToImageData(imageData, settings);
   ctx.putImageData(adjusted, 0, 0);
 }
 
 function applyAdjustmentsToImageData(imageData: ImageData, settings: ProcessingSettings) {
+  applyToneAdjustments(imageData, settings);
+
+  return applyDithering(imageData, {
+    algorithm: settings.algorithm,
+    intensity: settings.ditheringIntensity,
+    palette: settings.palette,
+    levels: settings.colorDepth,
+    mode: settings.palette ? "per-channel" : "grayscale",
+  });
+}
+
+function applyToneAdjustments(imageData: ImageData, settings: ProcessingSettings) {
   if (settings.brightness === 0 && settings.contrast === 0) {
-    return imageData;
+    return;
   }
 
   const data = imageData.data;
@@ -165,14 +174,12 @@ function applyAdjustmentsToImageData(imageData: ImageData, settings: ProcessingS
   const contrastFactor = Math.tan(((contrastValue + 1) * Math.PI) / 4);
 
   for (let index = 0; index < data.length; index += 4) {
-    data[index] = clamp(contrastFactor * (data[index] - 128) + 128 + brightnessOffset);
-    data[index + 1] = clamp(contrastFactor * (data[index + 1] - 128) + 128 + brightnessOffset);
-    data[index + 2] = clamp(contrastFactor * (data[index + 2] - 128) + 128 + brightnessOffset);
+    data[index] = clampToByte(contrastFactor * (data[index] - 128) + 128 + brightnessOffset);
+    data[index + 1] = clampToByte(contrastFactor * (data[index + 1] - 128) + 128 + brightnessOffset);
+    data[index + 2] = clampToByte(contrastFactor * (data[index + 2] - 128) + 128 + brightnessOffset);
   }
-
-  return imageData;
 }
 
-function clamp(value: number) {
+function clampToByte(value: number) {
   return Math.max(0, Math.min(255, value));
 }
