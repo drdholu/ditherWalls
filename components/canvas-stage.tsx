@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useRef, useState, type DragEvent } from "react";
 
 import { Button } from "@/components/ui/button";
+import { useImageProcessor } from "@/lib/hooks/use-image-processor";
+import { useProcessingStore } from "@/lib/state/processing-store";
 import { cn } from "@/lib/utils";
 
 interface CanvasStageProps {
@@ -24,6 +26,12 @@ type ImageState = {
 };
 
 type StageSource = "drop" | "paste" | "picker";
+
+type RenderableCanvas = {
+  canvas: HTMLCanvasElement;
+  width: number;
+  height: number;
+};
 
 const FILE_SIZE_LIMIT_BYTES = 15 * 1024 * 1024; // 15 MB
 const SUPPORTED_MIME_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/svg+xml"]);
@@ -55,9 +63,12 @@ export function CanvasStage({ className }: CanvasStageProps) {
     message: "Drop, paste, or pick an image to load it onto the canvas.",
   });
   const [imageState, setImageState] = useState<ImageState | null>(null);
+  const [processedState, setProcessedState] = useState<RenderableCanvas | null>(null);
+  const latestWorkerRequestRef = useRef<number | null>(null);
+  const settings = useProcessingStore((state) => state.settings);
 
   const renderOnStage = useCallback(
-    (image: ImageState | null) => {
+    (image: RenderableCanvas | null) => {
       if (!canvasRef.current) {
         return;
       }
@@ -102,14 +113,61 @@ export function CanvasStage({ className }: CanvasStageProps) {
     [stageSize],
   );
 
-  useEffect(() => {
-    if (!imageState) {
-      renderOnStage(null);
-      return;
-    }
+  const handleWorkerResult = useCallback(
+    (result: { id: number; width: number; height: number; bitmap?: ImageBitmap; imageData?: ImageData }) => {
+      if (latestWorkerRequestRef.current !== null && result.id !== latestWorkerRequestRef.current) {
+        if (result.bitmap) {
+          result.bitmap.close();
+        }
+        return;
+      }
 
-    renderOnStage(imageState);
-  }, [imageState, renderOnStage]);
+      const canvas = document.createElement("canvas");
+      canvas.width = result.width;
+      canvas.height = result.height;
+
+      const ctx = canvas.getContext("2d");
+      if (!ctx) {
+        setIsProcessing(false);
+        setStatus({ type: "error", message: "Unable to render processed pixels." });
+        if (result.bitmap) {
+          result.bitmap.close();
+        }
+        return;
+      }
+
+      if (result.bitmap) {
+        ctx.drawImage(result.bitmap, 0, 0);
+        result.bitmap.close();
+      } else if (result.imageData) {
+        ctx.putImageData(result.imageData, 0, 0);
+      }
+
+      setProcessedState({ canvas, width: result.width, height: result.height });
+      setIsProcessing(false);
+      setStatus({ type: "success", message: "Processing complete." });
+    },
+    [],
+  );
+
+  const handleWorkerError = useCallback((message: string) => {
+    console.error("Image processor worker error:", message);
+    setIsProcessing(false);
+    setStatus({
+      type: "error",
+      message: message || "Processing failed. Try adjusting the settings again.",
+    });
+  }, []);
+
+  const { ready: workerReady, processImage, syncSettings } = useImageProcessor({
+    onResult: handleWorkerResult,
+    onError: handleWorkerError,
+  });
+
+  useEffect(() => {
+    const renderable = processedState ?? imageState;
+    renderOnStage(renderable);
+  }, [imageState, processedState, renderOnStage]);
 
   useEffect(() => {
     if (typeof window === "undefined" || !dropZoneRef.current) {
@@ -138,6 +196,18 @@ export function CanvasStage({ className }: CanvasStageProps) {
     observer.observe(element);
     return () => observer.disconnect();
   }, []);
+
+  useEffect(() => {
+    if (!workerReady) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      syncSettings(settings);
+    }, 180);
+
+    return () => window.clearTimeout(timer);
+  }, [settings, workerReady, syncSettings]);
 
   const handleFiles = useCallback(
     async (files: FileList | File[] | null, source: StageSource) => {
@@ -182,6 +252,8 @@ export function CanvasStage({ className }: CanvasStageProps) {
           return;
         }
 
+        setProcessedState(null);
+        latestWorkerRequestRef.current = null;
         setImageState({
           canvas: nextImage.canvas,
           width: nextImage.canvas.width,
@@ -215,6 +287,46 @@ export function CanvasStage({ className }: CanvasStageProps) {
     },
     [],
   );
+
+  useEffect(() => {
+    if (!workerReady || !imageState) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      setStatus({ type: "info", message: "Applying adjustments…" });
+      setIsProcessing(true);
+
+      void processImage({
+        canvas: imageState.canvas,
+        width: imageState.width,
+        height: imageState.height,
+        settings,
+      })
+        .then((requestId) => {
+          if (requestId === null) {
+            setIsProcessing(false);
+            setStatus({
+              type: "error",
+              message: "Unable to submit image to the processor.",
+            });
+            return;
+          }
+
+          latestWorkerRequestRef.current = requestId;
+        })
+        .catch((error) => {
+          console.error("Image processing failed", error);
+          setIsProcessing(false);
+          setStatus({
+            type: "error",
+            message: "Processing failed. Check the console for details.",
+          });
+        });
+    }, 220);
+
+    return () => window.clearTimeout(timer);
+  }, [imageState, settings, workerReady, processImage]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -278,9 +390,10 @@ export function CanvasStage({ className }: CanvasStageProps) {
     [handleFiles],
   );
 
+  const displayMetrics = processedState ?? imageState;
   const stageChips = imageState
     ? [
-        `Dimensions · ${imageState.width} × ${imageState.height}`,
+        `Dimensions · ${displayMetrics?.width ?? imageState.width} × ${displayMetrics?.height ?? imageState.height}`,
         `File size · ${formatFileSize(imageState.size)}`,
         `Format · ${formatDisplayType(imageState.type)}`,
       ]
@@ -340,7 +453,7 @@ export function CanvasStage({ className }: CanvasStageProps) {
 
           {isProcessing && (
             <div className="absolute inset-0 flex items-center justify-center bg-background/70 backdrop-blur-sm">
-              <span className="animate-pulse text-sm font-medium text-muted-foreground">Decoding image…</span>
+              <span className="animate-pulse text-sm font-medium text-muted-foreground">{status.message}</span>
             </div>
           )}
         </div>
